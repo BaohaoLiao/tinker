@@ -4,12 +4,10 @@ from datetime import datetime
 
 import chz
 from tinker_cookbook import cli_utils, model_info
-from tinker_cookbook.recipes.reinforce_ada import (
-    arithmetic_env,
-    math_env,
-)
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
 from tinker_cookbook.rl.types import RLDatasetBuilder
+
+from tinker_cookbook.recipes.reinforce_ada import math_env
 
 logger = logging.getLogger(__name__)
 
@@ -19,20 +17,29 @@ class CLIConfig:
     """Simple command-line configuration for RL training."""
 
     # Model configuration
-    model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
+    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
     lora_rank: int = 32
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None
 
-    # Environment configuration
-    env: str = "arithmetic"  # Options: arithmetic, math, polaris, deepmath, gsm8k
+    # Training set
+    dataset_name: str = "RLHFlow/reinforce_ada_hard_prompt"
 
     # Training hyperparameters
     group_size: int = 4
-    groups_per_batch: int = 100
-    learning_rate: float = 1e-5
-    max_tokens: int = 5
+    groups_per_batch: int = 512
+    learning_rate: float = 1e-6
+    max_tokens: int = 2048
     kl_penalty_coef: float = 0.0
+
+    ## Reinforce-Ada Specific Hyperparameters
+    multiround_adaptive_downsampling=True
+    reinforce_ada_choice="balanced"
+    global_stat_est=True
+
+    ## TODO: clip
+    clip_ratio_low=0.2
+    clip_ratio_high=0.28
 
     # Number of optimizer steps per training iteration.
     # Useful for very large batch sizes.
@@ -45,10 +52,10 @@ class CLIConfig:
     compute_post_kl: bool = False
 
     # Evals
-    eval_every: int = 20
+    eval_every: int = 50
 
     # Checkpointing
-    save_every: int = 20
+    save_every: int = 50
 
     # Service configuration
     base_url: str | None = None
@@ -95,6 +102,7 @@ async def cli_main(cli_config: CLIConfig):
     )
     model_name = cli_config.model_name.replace("/", "-")
     run_name = f"{cli_config.env}-{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-{cli_config.group_size}group-{cli_config.groups_per_batch}batch-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
+   
     # create log path if it doesn't exist
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
@@ -105,16 +113,21 @@ async def cli_main(cli_config: CLIConfig):
         wandb_name = cli_config.wandb_name
     else:
         wandb_name = run_name
+
+    # dataset builder
+    dataset_builder = math_env.ReinforceAdaDatasetBuilder(
+        dataset_name=cli_config.dataset_name,
+        batch_size=cli_config.groups_per_batch,
+        model_name=cli_config.model_name,
+        renderer_name=renderer_name,
+        group_size=cli_config.group_size,
+        convo_prefix="standard",
+    )
+
     # Create full config
     config = Config(
         learning_rate=cli_config.learning_rate,
-        dataset_builder=get_dataset_builder(
-            env=cli_config.env,
-            batch_size=cli_config.groups_per_batch,
-            model_name=cli_config.model_name,
-            renderer_name=renderer_name,
-            group_size=cli_config.group_size,
-        ),
+        dataset_builder=dataset_builder,
         model_name=cli_config.model_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,
