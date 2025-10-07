@@ -267,7 +267,7 @@ class DeepMathDataset(MathDataset):
         convo_prefix: list[renderers.Message] | None = None,
     ):
         # Don't call super().__init__ since we're overriding the dataset loading
-        self.ds = load_dataset("zwhe99/DeepMath-103K", split="train").shuffle(seed=0)
+        self.ds = load_dataset("zwhe99/DeepMath-103K", split="train").select(range(1, 100)) #.shuffle(seed=0)
         self.batch_size = batch_size
         self.group_size = group_size
         self.renderer = renderer
