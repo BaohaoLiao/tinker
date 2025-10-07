@@ -5,8 +5,6 @@ from datetime import datetime
 import chz
 from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
-from tinker_cookbook.rl.types import RLDatasetBuilder
-
 from tinker_cookbook.recipes.reinforce_ada import math_env
 
 logger = logging.getLogger(__name__)
@@ -63,34 +61,6 @@ class CLIConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     max_steps_off_policy: int | None = None
-
-
-def get_dataset_builder(
-    env: str,
-    batch_size: int,
-    model_name: str,
-    renderer_name: str,
-    group_size: int,
-) -> RLDatasetBuilder:
-    if env == "arithmetic":
-        return arithmetic_env.ArithmeticDatasetBuilder(
-            batch_size=batch_size,
-            model_name_for_tokenizer=model_name,
-            renderer_name=renderer_name,
-            n_batches=100,
-            include_fewshot=True,
-            group_size=group_size,
-        )
-    elif env in ["math", "polaris", "deepmath", "gsm8k"]:
-        return math_env.get_math_dataset_builder(
-            dataset_name=env,
-            batch_size=batch_size,
-            model_name_for_tokenizer=model_name,
-            renderer_name=renderer_name,
-            group_size=group_size,
-        )
-    else:
-        raise ValueError(f"Unknown environment: {env}")
 
 
 async def cli_main(cli_config: CLIConfig):
