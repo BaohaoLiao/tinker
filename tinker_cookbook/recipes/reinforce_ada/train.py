@@ -118,7 +118,7 @@ async def cli_main(cli_config: CLIConfig):
     dataset_builder = math_env.ReinforceAdaDatasetBuilder(
         dataset_name=cli_config.dataset_name,
         batch_size=cli_config.groups_per_batch,
-        model_name=cli_config.model_name,
+        model_name_for_tokenizer=cli_config.model_name,
         renderer_name=renderer_name,
         group_size=cli_config.group_size,
         convo_prefix="standard",
