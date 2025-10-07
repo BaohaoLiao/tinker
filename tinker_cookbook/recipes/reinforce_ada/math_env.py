@@ -94,10 +94,7 @@ class ReinforceAdaDataset(RLDataset):
         self.group_size = group_size
         self.renderer = renderer
         self.convo_prefix = convo_prefix
-
-    @classmethod
-    def question_suffix(cls) -> str:
-        return " Let's think step by step and output the final answer within \\boxed{}."
+        self.instruction = " Let's think step by step and output the final answer within \\boxed{}."
 
     def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
         batch_start = index * self.batch_size
@@ -122,7 +119,11 @@ class ReinforceAdaDataset(RLDataset):
             return None
         return ProblemGroupBuilder(
             env_thunk=partial(
-                MathEnv, problem, answer, self.renderer, convo_prefix=self.convo_prefix
+                MathEnv, 
+                problem + self.instruction, 
+                answer, 
+                self.renderer, 
+                convo_prefix=self.convo_prefix
             ),
             num_envs=group_size,
             dataset_name=self.dataset_name,
