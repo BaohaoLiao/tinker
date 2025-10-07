@@ -4,7 +4,7 @@ from datetime import datetime
 
 import chz
 from tinker_cookbook import cli_utils, model_info
-from tinker_cookbook.recipes.math_rl import (
+from tinker_cookbook.recipes.reinforce_ada import (
     arithmetic_env,
     math_env,
 )

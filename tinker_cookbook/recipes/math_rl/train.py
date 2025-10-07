@@ -105,21 +105,16 @@ async def cli_main(cli_config: CLIConfig):
         wandb_name = cli_config.wandb_name
     else:
         wandb_name = run_name
-
-    dataset_builder=get_dataset_builder(
+    # Create full config
+    config = Config(
+        learning_rate=cli_config.learning_rate,
+        dataset_builder=get_dataset_builder(
             env=cli_config.env,
             batch_size=cli_config.groups_per_batch,
             model_name=cli_config.model_name,
             renderer_name=renderer_name,
             group_size=cli_config.group_size,
-        )
-    print(dataset_builder)
-    exit()
-
-    # Create full config
-    config = Config(
-        learning_rate=cli_config.learning_rate,
-        dataset_builder=dataset_builder,
+        ),
         model_name=cli_config.model_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,

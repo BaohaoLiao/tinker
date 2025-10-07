@@ -814,6 +814,8 @@ async def do_sync_training(
 
         # Get batch and sample trajectories
         env_group_builders_P = dataset.get_batch(i_batch)
+        print(env_group_builders_P)
+        exit()
         with timed("sample", metrics):
             trajectory_groups_P = await asyncio.gather(
                 *[
