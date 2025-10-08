@@ -40,8 +40,46 @@ from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
 from tinker_cookbook.rl.reward_history import RewardHistory
+from tinker_cookbook.rl.adaptive_sampling import AdaptiveSamplingConfig
 
 logger = logging.getLogger(__name__)
+
+
+@chz.chz
+class Config:
+    learning_rate: float
+    dataset_builder: RLDatasetBuilder  # also determines batch size
+    model_name: str
+    max_tokens: int
+    compute_post_kl: bool = False
+    evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
+    lora_rank: int = 32
+
+    kl_penalty_coef: float = 0.0
+    kl_discount_factor: float = 0.0
+
+    # Number of optimizer steps per training iteration.
+    # Useful for very large batch sizes.
+    num_substeps: int = 1
+
+    wandb_project: str | None = None
+    wandb_name: str | None = None
+
+    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
+    base_url: str | None = None
+
+    remove_constant_reward_groups: bool = False
+    eval_every: int = 20
+    save_every: int = 20
+    load_checkpoint_path: str | None = None
+
+    # Global GRPO statistics
+    global_stat_est: bool = False
+
+    # Adaptive Sampling Configuration
+    adaptive_sampling: AdaptiveSamplingConfig = chz.field(
+        default_factory=lambda: AdaptiveSamplingConfig()
+    )
 
 
 def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:
@@ -53,7 +91,7 @@ def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]
 
 def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
     # Cut down the number of trajectories to print
-    max_trajs_to_print = 4
+    max_trajs_to_print = 1
     if len(traj_group.trajectories_G) > max_trajs_to_print:
         inds = _select_representative_inds(traj_group.get_total_rewards(), max_trajs_to_print)
         traj_group = TrajectoryGroup(
@@ -152,90 +190,6 @@ async def train_step(
         training_logprobs_D.extend(training_logprobs)
         await optim_step(training_client, learning_rate)
     return training_logprobs_D
-
-
-@chz.chz
-class StreamMinibatchConfig:
-    """
-    Configuration for training with minibatch streaming.
-    Once we have accumulated enough trajectories for a minibatch, we will
-    immediately train on them, instead of waiting for the full batch of
-    trajectories to be ready.
-    """
-
-    # Total number of trajectory groups across all minibatches and substeps
-    groups_per_batch: int
-    # For each substep, we will divide up the number of trajectory groups
-    # into this many minibatches.
-    # We will do num_minibatches forward_backward() passes and one optim_step()
-    # per substep.
-    num_minibatches: int
-
-
-@chz.chz
-class AsyncConfig:
-    """Configuration for async RL training"""
-
-    # If samples are generated from a sample more than this many steps ago,
-    # we will skip training on them.
-    max_steps_off_policy: int
-    # We will ensure all batches have at least this many groups, even
-    # as we discard stale samples
-    groups_per_batch: int
-
-
-@chz.chz
-class Config:
-    learning_rate: float
-    dataset_builder: RLDatasetBuilder  # also determines batch size
-    model_name: str
-    max_tokens: int
-    compute_post_kl: bool = False
-    evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
-    lora_rank: int = 32
-
-    kl_penalty_coef: float = 0.0
-    kl_discount_factor: float = 0.0
-
-    # Number of optimizer steps per training iteration.
-    # Useful for very large batch sizes.
-    num_substeps: int = 1
-
-    wandb_project: str | None = None
-    wandb_name: str | None = None
-
-    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
-    base_url: str | None = None
-
-    remove_constant_reward_groups: bool = False
-    eval_every: int = 20
-    save_every: int = 20
-    load_checkpoint_path: str | None = None
-
-    # Reinforce-Ada specific parameters
-    multiround_adaptive_downsampling: bool = False
-    reinforce_ada_choice: str = "balanced" # or "positive-focused"
-    positive_threshold: float = 0.7
-    max_rounds: int = 4
-    round_repeat: int = 8
-    global_stat_est: bool = False
-
-
-@chz.chz
-class WrappedTrajectoryGroup:
-    """
-    A wrapper around a trajectory group that includes metadata about how it was generated.
-    Used when we need to overlap sampling and training.
-    """
-
-    trajectory_group: TrajectoryGroup
-    # The env group builder that produced the trajectory group.
-    # Pass this along in case the sampler is too stale, and we need to
-    # requeue this group.
-    env_group_builder: EnvGroupBuilder
-    # The step that produced this trajectory group.
-    sampling_client_step: int
-    metrics: dict[str, Any] = chz.field(default_factory=dict)
 
 
 async def do_group_rollout_and_filter_constant_reward(
@@ -430,12 +384,23 @@ async def do_sync_training(
     tokenizer: Tokenizer,
     reward_history: RewardHistory | None = None,
 ):
-    """Implements fully synchronous on-policy training"""
+    """Implements fully synchronous on-policy training with adaptive sampling."""
+
+    from tinker_cookbook.rl.adaptive_sampling import AdaptiveSampler
 
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
         cfg, training_client, start_batch, reward_history=reward_history
     )
+
+    # Create adaptive sampler
+    adaptive_sampler  = None
+    if cfg.adaptive_sampling.enabled:
+        adaptive_sampler = AdaptiveSampler(
+            config=cfg.adaptive_sampling,
+            sampling_client=sampling_client,
+            max_tokens=cfg.max_tokens,
+        )
 
     for i_batch in range(start_batch, end_batch):
         metrics = {
@@ -454,14 +419,27 @@ async def do_sync_training(
 
         # Get batch and sample trajectories
         env_group_builders_P = dataset.get_batch(i_batch)
-
         with timed("sample", metrics):
-            trajectory_groups_P = await asyncio.gather(
-                *[
-                    do_group_rollout_and_filter_constant_reward(cfg, sampling_client, builder)
-                    for builder in env_group_builders_P
-                ]
-            )
+            if adaptive_sampler:
+                # Multi-round adaptive sampling
+                trajectory_groups_P, adaptive_metrics = await adaptive_sampler.multi_round_adaptive_downsampling(
+                    env_group_builders_P
+                )
+                #metrics.update(adaptive_metrics)
+                
+                logger.info(
+                    f"Adaptive sampling completed: "
+                    f"{len(trajectory_groups_P)} groups, "
+                    f"{sum(len(g.trajectories_G) for g in trajectory_groups_P)} trajectories"
+                )
+            else:
+                # Standard sampling: generate all samples at once
+                policy = TinkerTokenCompleter(sampling_client, max_tokens=cfg.max_tokens)
+                trajectory_groups_P = await asyncio.gather(
+                    *[do_group_rollout(builder, policy) for builder in env_group_builders_P]
+                )
+
+
         trajectory_groups_P = [
             trajectory_group
             for trajectory_group in trajectory_groups_P
@@ -479,6 +457,11 @@ async def do_sync_training(
             trajectory_groups_P,
             reward_history=reward_history,
         )
+
+        # Update adaptive sampler with new sampling client
+        if cfg.adaptive_sampling.enabled:
+            adaptive_sampler.sampling_client = sampling_client
+            adaptive_sampler.policy = TinkerTokenCompleter(sampling_client, max_tokens=cfg.max_tokens)
 
         # Log metrics
         metrics.update(train_step_metrics)
