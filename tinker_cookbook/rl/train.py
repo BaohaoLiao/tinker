@@ -228,7 +228,7 @@ async def save_checkpoint_and_get_sampling_client(
             name=f"{step:06d}",
             log_path=cfg.log_path,
             loop_state={"step": step, "epoch": epoch, "batch": batch_in_epoch},
-            kind="both" if (step > 0 and step % cfg.save_every == 0) else "sampler",
+            kind="state", # if (step > 0 and step % cfg.save_every == 0) else "sampler",
         )
 
         # Save reward history if it exists
