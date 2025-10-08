@@ -25,8 +25,9 @@ class MathEnv(ProblemEnv):
         convo_prefix: list[renderers.Message] | None = None,
         grader: Literal["sympy", "math_verify"] = "math_verify",
         timeout: float = 1.0,
+        format_coef: float = 0.0,
     ):
-        super().__init__(renderer, convo_prefix)
+        super().__init__(renderer, convo_prefix, format_coef)
         self.problem = problem
         self.answer = answer
         self.grader = grader
@@ -37,7 +38,7 @@ class MathEnv(ProblemEnv):
         return " Let's think step by step and output the final answer within \\boxed{}."
 
     def get_question(self) -> str:
-        return self.problem + self.question_suffix()
+        return self.problem
 
     def check_format(self, sample_str: str) -> bool:
         try:
