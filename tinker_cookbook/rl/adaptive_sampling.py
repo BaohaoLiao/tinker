@@ -148,11 +148,6 @@ class AdaptiveSampler:
             # Generate for active prompts only
             active_builders = [env_group_builders[i] for i in active_indices]
             
-            logger.info(
-                f"Round {round_num}: generating {self.config.samples_per_round} samples "
-                f"for {len(active_builders)} active prompts"
-            )
-            
             # Generate trajectories for active prompts
             round_groups = await self._generate_round(active_builders, self.config.samples_per_round)
             
