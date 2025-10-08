@@ -218,7 +218,7 @@ class Config:
 
     # Reinforce-Ada specific parameters
     multiround_adaptive_downsampling: bool = False
-    reinforce_ada_choice: str | None = None # "balanced" or "positive-focused"
+    reinforce_ada_choice: str | None = None  # "balanced" or "positive-focused"
     global_stat_est: bool = False
 
 
@@ -578,11 +578,11 @@ async def save_checkpoint_and_get_sampling_client(
         if reward_history is not None:
             reward_history_path = os.path.join(cfg.log_path, f"reward_history_{i_batch:06d}.json")
             reward_history.save(reward_history_path)
-            
+
             # Also save as "latest" for easy resumption
             latest_path = os.path.join(cfg.log_path, "reward_history_latest.json")
             reward_history.save(latest_path)
-            
+
             # Add reward history stats to metrics
             stats = reward_history.get_stats()
             metrics.update({f"reward_history/{k}": v for k, v in stats.items()})
@@ -661,7 +661,10 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 
     # Get a sampling client using the new weights
     sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
-        cfg, training_client, i_batch, reward_history=reward_history,
+        cfg,
+        training_client,
+        i_batch,
+        reward_history=reward_history,
     )
     metrics.update(checkpoint_metrics)
 
@@ -945,8 +948,7 @@ async def main(
         if resume_info:
             # Try to load from the specific batch checkpoint
             reward_history_path = os.path.join(
-                cfg.log_path, 
-                f"reward_history_{start_batch:06d}.json"
+                cfg.log_path, f"reward_history_{start_batch:06d}.json"
             )
             if os.path.exists(reward_history_path):
                 reward_history.load(reward_history_path)

@@ -55,7 +55,7 @@ class CLIConfig:
 
     ## Reinforce-Ada specific hyperparameters
     multiround_adaptive_downsampling: bool = False
-    reinforce_ada_choice: str | None = None # "balanced" or "positive-focused"
+    reinforce_ada_choice: str | None = None  # "balanced" or "positive-focused"
     global_stat_est: bool = False
 
     ## TODO: clip
@@ -72,7 +72,7 @@ async def cli_main(cli_config: CLIConfig):
     )
     model_name = cli_config.model_name.replace("/", "-")
     run_name = f"{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-{cli_config.group_size}group-{cli_config.groups_per_batch}batch-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
-   
+
     # create log path if it doesn't exist
     if cli_config.log_path is not None:
         log_path = cli_config.log_path

@@ -59,10 +59,10 @@ class MathEnv(ProblemEnv):
         return [
             {
                 "role": "system",
-                "content": "Please reason step by step, and put your final answer within \\boxed{}."
+                "content": "Please reason step by step, and put your final answer within \\boxed{}.",
             },
         ]
-    
+
 
 def safe_grade(given_answer: str, ground_truth: str, grader: str = "sympy", timeout: float = 1.0):
     if grader == "sympy":
@@ -78,7 +78,7 @@ def safe_grade(given_answer: str, ground_truth: str, grader: str = "sympy", time
         logger.warning(f"Timeout grading {given_answer} against {ground_truth}")
         return False
     return out
-    
+
 
 class ReinforceAdaDataset(RLDataset):
     def __init__(
@@ -106,7 +106,7 @@ class ReinforceAdaDataset(RLDataset):
             for row in self.ds.select(range(batch_start, batch_end))
             if (builder := self._make_env_group_builder(row, self.group_size)) is not None  # pyright: ignore[reportArgumentType]
         ]
-    
+
     def __len__(self) -> int:
         return math.ceil(len(self.ds) / self.batch_size)
 
@@ -120,16 +120,16 @@ class ReinforceAdaDataset(RLDataset):
             return None
         return ProblemGroupBuilder(
             env_thunk=partial(
-                MathEnv, 
-                problem + self.instruction, 
-                answer, 
-                self.renderer, 
-                convo_prefix=self.convo_prefix
+                MathEnv,
+                problem + self.instruction,
+                answer,
+                self.renderer,
+                convo_prefix=self.convo_prefix,
             ),
             num_envs=group_size,
             dataset_name=self.dataset_name,
         )
-    
+
 
 @chz.chz
 class ReinforceAdaDatasetBuilder(RLDatasetBuilder):

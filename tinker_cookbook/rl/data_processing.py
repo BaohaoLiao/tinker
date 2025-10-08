@@ -41,16 +41,16 @@ def compute_advantages_global(
 
     for traj_group, env_builder in zip(trajectory_groups_P, env_group_builders_P, strict=True):
         rewards_G = torch.tensor(traj_group.get_total_rewards())
-        
+
         # Create a unique identifier for this prompt
         prompt_id = env_builder.get_prompt_id()
-        
+
         # Add current rewards to history
         reward_history.add_rewards(prompt_id, rewards_G.tolist())
-        
+
         # Compute global mean for this prompt
         global_mean = reward_history.get_mean(prompt_id)
-        
+
         # Center advantages using global mean
         advantages_G = rewards_G - global_mean
         advantages_P.append(advantages_G)
@@ -66,13 +66,13 @@ def compute_advantages(
 ) -> List[torch.Tensor]:
     """
     Compute advantages based on configuration.
-    
+
     Args:
         trajectory_groups_P: List of trajectory groups
         env_group_builders_P: List of environment builders (required if use_global=True)
         reward_history: Reward history tracker (required if use_global=True)
         use_global: If True, use global mean; if False, use local GRPO mean
-    
+
     Returns:
         List of advantage tensors
     """
