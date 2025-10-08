@@ -298,6 +298,9 @@ class AdaptiveSampler:
         trajectory_groups = await asyncio.gather(
             *[do_group_rollout(builder, self.policy) for builder in expanded_builders]
         )
+
+        print(trajectory_groups)
+        exit()
         
         return trajectory_groups
     

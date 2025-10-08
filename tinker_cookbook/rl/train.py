@@ -21,7 +21,6 @@ from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingCli
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
     compute_advantages,
-    remove_constant_reward_groups,
 )
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
 from tinker_cookbook.rl.metrics import (
@@ -72,7 +71,6 @@ class Config:
     log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
     base_url: str | None = None
 
-    remove_constant_reward_groups: bool = False
     eval_every: int = 50
     save_every: int = 50
     load_checkpoint_path: str | None = None
@@ -196,23 +194,6 @@ async def train_step(
     return training_logprobs_D
 
 
-async def do_group_rollout_and_filter_constant_reward(
-    cfg: Config,
-    sampling_client: tinker.SamplingClient,
-    env_group_builder: EnvGroupBuilder,
-) -> TrajectoryGroup | None:
-    policy = TinkerTokenCompleter(sampling_client, max_tokens=cfg.max_tokens)
-    trajectory_group = await do_group_rollout(env_group_builder, policy)
-
-    # Remove if all trajectories have the same reward
-    trajectory_groups = [trajectory_group]
-    if cfg.remove_constant_reward_groups:
-        trajectory_groups = remove_constant_reward_groups(trajectory_groups)
-    if len(trajectory_groups) == 0:
-        return None
-    return trajectory_groups[0]
-
-
 async def save_checkpoint_and_get_sampling_client(
     cfg: Config,
     training_client: tinker.TrainingClient,
@@ -263,7 +244,7 @@ async def prepare_minibatch(
     metrics.update(compute_trajectory_metrics(trajectory_groups_P, taglist_P))
 
     # Print one trajectory
-    for traj_group in trajectory_groups_P[:2]:
+    for traj_group in trajectory_groups_P[:1]:
         print_group(traj_group, tokenizer)
 
     # Assemble training data
