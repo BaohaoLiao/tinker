@@ -51,11 +51,12 @@ class CLIConfig:
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
-    max_steps_off_policy: int | None = None
-
     ## Reinforce-Ada specific hyperparameters
     multiround_adaptive_downsampling: bool = False
-    reinforce_ada_choice: str | None = None  # "balanced" or "positive-focused"
+    reinforce_ada_choice: str = "balanced" # or "positive-focused"
+    positive_threshold: float = 0.7
+    max_rounds: int = 4
+    round_repeat: int = 8
     global_stat_est: bool = False
 
     ## TODO: clip
@@ -111,14 +112,11 @@ async def cli_main(cli_config: CLIConfig):
         num_substeps=cli_config.num_substeps,
         eval_every=cli_config.eval_every,
         save_every=cli_config.save_every,
-        async_config=AsyncConfig(
-            max_steps_off_policy=cli_config.max_steps_off_policy,
-            groups_per_batch=cli_config.groups_per_batch,
-        )
-        if cli_config.max_steps_off_policy is not None
-        else None,
         multiround_adaptive_downsampling=cli_config.multiround_adaptive_downsampling,
         reinforce_ada_choice=cli_config.reinforce_ada_choice,
+        positive_threshold=cli_config.positive_threshold,
+        max_rounds=cli_config.max_rounds,
+        round_repeat=cli_config.round_repeat,
         global_stat_est=cli_config.global_stat_est,
     )
 
