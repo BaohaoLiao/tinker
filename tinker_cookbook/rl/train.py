@@ -125,7 +125,7 @@ async def forward_backward(
 ) -> List[torch.Tensor]:
     """Accumulate gradients on a minibatch of data"""
     fwd_bwd_future = await training_client.forward_backward_async(
-        list(map(remove_mask, batch_d)), loss_fn="importance_sampling"
+        list(map(remove_mask, batch_d)), loss_fn="ppo"
     )
     fwd_bwd_result = await fwd_bwd_future.result_async()
 
@@ -244,7 +244,7 @@ async def do_sync_training_with_stream_minibatch(
 
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        cfg, training_client, start_batch
+        cfg, training_client, start_batch, reward_history=reward_history
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -562,6 +562,7 @@ async def save_checkpoint_and_get_sampling_client(
     cfg: Config,
     training_client: tinker.TrainingClient,
     i_batch: int,
+    reward_history: RewardHistory | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     metrics = {}
     with timed("save_checkpoint", metrics):
@@ -572,6 +573,20 @@ async def save_checkpoint_and_get_sampling_client(
             loop_state={"batch": i_batch},
             kind="both" if (i_batch > 0 and i_batch % cfg.save_every == 0) else "sampler",
         )
+
+        # Save reward history if it exists
+        if reward_history is not None:
+            reward_history_path = os.path.join(cfg.log_path, f"reward_history_{i_batch:06d}.json")
+            reward_history.save(reward_history_path)
+            
+            # Also save as "latest" for easy resumption
+            latest_path = os.path.join(cfg.log_path, "reward_history_latest.json")
+            reward_history.save(latest_path)
+            
+            # Add reward history stats to metrics
+            stats = reward_history.get_stats()
+            metrics.update({f"reward_history/{k}": v for k, v in stats.items()})
+
         return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
 
 
@@ -631,6 +646,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     i_batch: int,
     data_D: list[tinker.Datum],
     training_logprobs_D: list[torch.Tensor],
+    reward_history: RewardHistory | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """
     At the end of the iteration, this will compute metrics for the full batch
@@ -645,7 +661,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 
     # Get a sampling client using the new weights
     sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
-        cfg, training_client, i_batch
+        cfg, training_client, i_batch, reward_history=reward_history,
     )
     metrics.update(checkpoint_metrics)
 
@@ -757,6 +773,7 @@ async def do_train_step_streaming_and_get_sampling_client(
         i_batch + 1,
         all_data_D,
         all_training_logprobs_D,
+        reward_history=reward_history,
     )
     metrics.update(full_batch_metrics)
     return sampling_client, metrics
@@ -798,6 +815,7 @@ async def do_train_step_and_get_sampling_client(
         i_batch + 1,
         data_D,
         training_logprobs_D,
+        reward_history=reward_history,
     )
     metrics.update(full_batch_metrics)
 
@@ -821,7 +839,7 @@ async def do_sync_training(
 
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        cfg, training_client, start_batch
+        cfg, training_client, start_batch, reward_history=reward_history
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -918,9 +936,27 @@ async def main(
     logger.info(f"Will train on {num_batches} batches")
 
     # Initialize reward history tracker if using global statistics
-    reward_history = RewardHistory() if cfg.global_stat_est else None
+    reward_history = None
     if cfg.global_stat_est:
+        reward_history = RewardHistory()
         logger.info("Using global statistics estimation for advantages")
+
+        # Try to load reward history if resuming
+        if resume_info:
+            # Try to load from the specific batch checkpoint
+            reward_history_path = os.path.join(
+                cfg.log_path, 
+                f"reward_history_{start_batch:06d}.json"
+            )
+            if os.path.exists(reward_history_path):
+                reward_history.load(reward_history_path)
+            else:
+                # Fall back to latest
+                latest_path = os.path.join(cfg.log_path, "reward_history_latest.json")
+                if os.path.exists(latest_path):
+                    reward_history.load(latest_path)
+                else:
+                    logger.warning("No reward history found, starting fresh")
 
     # Training loop
     if cfg.async_config is not None:
@@ -952,6 +988,11 @@ async def main(
             kind="both",
             loop_state={"batch": num_batches},
         )
+
+        # Save final reward history
+        if reward_history is not None:
+            final_reward_history_path = os.path.join(cfg.log_path, "reward_history_final.json")
+            reward_history.save(final_reward_history_path)
     else:
         logger.info("Training was already complete; nothing to do")
 
