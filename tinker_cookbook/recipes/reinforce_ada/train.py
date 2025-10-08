@@ -4,7 +4,7 @@ from datetime import datetime
 
 import chz
 from tinker_cookbook import cli_utils, model_info
-from tinker_cookbook.rl.train import AsyncConfig, Config, main
+from tinker_cookbook.rl.train import Config, main
 from tinker_cookbook.recipes.reinforce_ada import math_env
 
 logger = logging.getLogger(__name__)
@@ -51,13 +51,15 @@ class CLIConfig:
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
+    # Global GRPO statistics
+    global_stat_est: bool = False
+
     ## Reinforce-Ada specific hyperparameters
     multiround_adaptive_downsampling: bool = False
     reinforce_ada_choice: str = "balanced" # or "positive-focused"
     positive_threshold: float = 0.7
     max_rounds: int = 4
     round_repeat: int = 8
-    global_stat_est: bool = False
 
     ## TODO: clip
     # clip_ratio_low=0.2
@@ -114,10 +116,9 @@ async def cli_main(cli_config: CLIConfig):
         save_every=cli_config.save_every,
         multiround_adaptive_downsampling=cli_config.multiround_adaptive_downsampling,
         reinforce_ada_choice=cli_config.reinforce_ada_choice,
-        positive_threshold=cli_config.positive_threshold,
-        max_rounds=cli_config.max_rounds,
-        round_repeat=cli_config.round_repeat,
         global_stat_est=cli_config.global_stat_est,
+        positive_threshold=cli_config.positive_threshold,
+        max_rounds=cli_config
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)

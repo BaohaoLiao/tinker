@@ -40,6 +40,7 @@ from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
 from tinker_cookbook.rl.reward_history import RewardHistory
+from tinker_cookbook.rl.adaptive_sampling import AdaptiveSamplingConfig
 
 logger = logging.getLogger(__name__)
 
@@ -212,13 +213,33 @@ class Config:
     save_every: int = 20
     load_checkpoint_path: str | None = None
 
-    # Reinforce-Ada specific parameters
+    # Global GRPO statistics
+    group_size: int = 4
+    global_stat_est: bool = False
+
+    # ============ NEW: Adaptive Sampling Configuration ============
+    adaptive_sampling: AdaptiveSamplingConfig = chz.field(
+        default_factory=lambda: AdaptiveSamplingConfig()
+    )
+    
+    # Legacy reinforce-ada parameters (for backwards compatibility)
     multiround_adaptive_downsampling: bool = False
-    reinforce_ada_choice: str = "balanced" # or "positive-focused"
+    reinforce_ada_choice: str = "balanced"
     positive_threshold: float = 0.7
     max_rounds: int = 4
     round_repeat: int = 8
-    global_stat_est: bool = False
+    
+    def __post_init__(self):
+        """Post-initialization to handle legacy parameter migration."""
+        # Migrate legacy parameters to new adaptive_sampling config
+        if self.multiround_adaptive_downsampling:
+            self.adaptive_sampling.enabled = True
+            self.adaptive_sampling.strategy = self.reinforce_ada_choice
+            self.adaptive_sampling.positive_threshold = self.positive_threshold
+            self.adaptive_sampling.max_rounds = self.max_rounds
+            self.adaptive_sampling.samples_per_round = self.round_repeat
+            self.adaptive_sampling.final_samples_per_prompt = self.group_size
+            self.adaptive_sampling.use_global_stats = self.global_stat_est
 
 
 @chz.chz
@@ -430,12 +451,23 @@ async def do_sync_training(
     tokenizer: Tokenizer,
     reward_history: RewardHistory | None = None,
 ):
-    """Implements fully synchronous on-policy training"""
+    """Implements fully synchronous on-policy training with adaptive sampling."""
+
+    from tinker_cookbook.rl.adaptive_sampling import AdaptiveSampler
 
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
         cfg, training_client, start_batch, reward_history=reward_history
     )
+
+    # Create adaptive sampler
+    adaptive_sampler  = None
+    if cfg.adaptive_sampling.enabled:
+        adaptive_sampler = AdaptiveSampler(
+            config=cfg.adaptive_sampling,
+            sampling_client=sampling_client,
+            max_tokens=cfg.max_tokens,
+        )
 
     for i_batch in range(start_batch, end_batch):
         metrics = {
@@ -454,14 +486,27 @@ async def do_sync_training(
 
         # Get batch and sample trajectories
         env_group_builders_P = dataset.get_batch(i_batch)
-
         with timed("sample", metrics):
-            trajectory_groups_P = await asyncio.gather(
-                *[
-                    do_group_rollout_and_filter_constant_reward(cfg, sampling_client, builder)
-                    for builder in env_group_builders_P
-                ]
-            )
+            if adaptive_sampler:
+                # Multi-round adaptive sampling
+                trajectory_groups_P, adaptive_metrics = await adaptive_sampler.multi_round_adaptive_downsampling(
+                    env_group_builders_P
+                )
+                metrics.update(adaptive_metrics)
+                
+                logger.info(
+                    f"Adaptive sampling completed: "
+                    f"{len(trajectory_groups_P)} groups, "
+                    f"{sum(len(g.trajectories_G) for g in trajectory_groups_P)} trajectories"
+                )
+            else:
+                # Standard sampling: generate all samples at once
+                policy = TinkerTokenCompleter(sampling_client, max_tokens=cfg.max_tokens)
+                trajectory_groups_P = await asyncio.gather(
+                    *[do_group_rollout(builder, policy) for builder in env_group_builders_P]
+                )
+
+
         trajectory_groups_P = [
             trajectory_group
             for trajectory_group in trajectory_groups_P
@@ -479,6 +524,11 @@ async def do_sync_training(
             trajectory_groups_P,
             reward_history=reward_history,
         )
+
+        # Update adaptive sampler with new sampling client
+        if cfg.adaptive_sampling.enabled:
+            adaptive_sampler.sampling_client = sampling_client
+            adaptive_sampler.policy = TinkerTokenCompleter(sampling_client, max_tokens=cfg.max_tokens)
 
         # Log metrics
         metrics.update(train_step_metrics)
