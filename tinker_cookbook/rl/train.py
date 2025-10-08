@@ -62,6 +62,10 @@ class Config:
     # Useful for very large batch sizes.
     num_substeps: int = 1
 
+    # Multi-epoch training parameters
+    num_epochs: int = 1
+    total_steps: int | None = None  # If set, overrides num_epochs
+
     wandb_project: str | None = None
     wandb_name: str | None = None
 
@@ -69,8 +73,8 @@ class Config:
     base_url: str | None = None
 
     remove_constant_reward_groups: bool = False
-    eval_every: int = 20
-    save_every: int = 20
+    eval_every: int = 50
+    save_every: int = 50
     load_checkpoint_path: str | None = None
 
     # Global GRPO statistics
@@ -212,22 +216,24 @@ async def do_group_rollout_and_filter_constant_reward(
 async def save_checkpoint_and_get_sampling_client(
     cfg: Config,
     training_client: tinker.TrainingClient,
-    i_batch: int,
+    step: int,
+    epoch: int,
+    batch_in_epoch: int,
     reward_history: RewardHistory | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     metrics = {}
     with timed("save_checkpoint", metrics):
         path_dict = await checkpoint_utils.save_checkpoint_async(
             training_client=training_client,
-            name=f"{i_batch:06d}",
+            name=f"{step:06d}",
             log_path=cfg.log_path,
-            loop_state={"batch": i_batch},
-            kind="both" if (i_batch > 0 and i_batch % cfg.save_every == 0) else "sampler",
+            loop_state={"step": step, "epoch": epoch, "batch": batch_in_epoch},
+            kind="both" if (step > 0 and step % cfg.save_every == 0) else "sampler",
         )
 
         # Save reward history if it exists
-        if reward_history is not None:
-            reward_history_path = os.path.join(cfg.log_path, f"reward_history_{i_batch:06d}.json")
+        if reward_history is not None and step > 0 and step % cfg.save_every == 0:
+            reward_history_path = os.path.join(cfg.log_path, f"reward_history_{step:06d}.json")
             reward_history.save(reward_history_path)
 
             # Also save as "latest" for easy resumption
@@ -294,7 +300,9 @@ async def prepare_minibatch(
 async def compute_full_batch_metrics_and_get_sampling_client(
     cfg: Config,
     training_client: tinker.TrainingClient,
-    i_batch: int,
+    step: int,
+    epoch: int,
+    batch_in_epoch: int,
     data_D: list[tinker.Datum],
     training_logprobs_D: list[torch.Tensor],
     reward_history: RewardHistory | None = None,
@@ -314,7 +322,9 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
         cfg,
         training_client,
-        i_batch,
+        step,
+        epoch,
+        batch_in_epoch,
         reward_history=reward_history,
     )
     metrics.update(checkpoint_metrics)
@@ -330,7 +340,10 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 
 async def do_train_step_and_get_sampling_client(
     cfg: Config,
-    i_batch: int,
+    step: int,
+    epoch: int,
+    batch_in_epoch: int,
+    total_steps: int,
     training_client: tinker.TrainingClient,
     service_client: tinker.ServiceClient,
     tokenizer: Tokenizer,
@@ -361,7 +374,9 @@ async def do_train_step_and_get_sampling_client(
         cfg,
         training_client,
         # NOTE: saving the checkpoint as the i + 1 step
-        i_batch + 1,
+        step + 1,
+        epoch,
+        batch_in_epoch,
         data_D,
         training_logprobs_D,
         reward_history=reward_history,
@@ -372,9 +387,11 @@ async def do_train_step_and_get_sampling_client(
 
 
 async def do_sync_training(
+    start_step: int,
+    start_epoch: int,
     start_batch: int,
-    end_batch: int,
-    num_batches: int,
+    total_steps: int,
+    batches_per_epoch: int,
     cfg: Config,
     training_client: tinker.TrainingClient,
     service_client: tinker.ServiceClient,
@@ -390,11 +407,11 @@ async def do_sync_training(
 
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        cfg, training_client, start_batch, reward_history=reward_history
+        cfg, training_client, start_step, start_epoch, start_batch, reward_history=reward_history
     )
 
     # Create adaptive sampler
-    adaptive_sampler  = None
+    adaptive_sampler = None
     if cfg.adaptive_sampling.enabled:
         adaptive_sampler = AdaptiveSampler(
             config=cfg.adaptive_sampling,
@@ -402,31 +419,43 @@ async def do_sync_training(
             max_tokens=cfg.max_tokens,
         )
 
-    for i_batch in range(start_batch, end_batch):
+    current_step = start_step
+    current_epoch = start_epoch
+    current_batch = start_batch
+
+    while current_step < total_steps:
+        # Shuffle dataset at the beginning of each epoch
+        if current_batch == 0:
+            logger.info(f"Starting epoch {current_epoch} (step {current_step}/{total_steps})")
+            dataset.set_epoch(seed=current_epoch)
+            logger.info(f"Dataset shuffled with seed={current_epoch}")
+
         metrics = {
-            "progress/batch": i_batch,
-            "optim/lr": cfg.learning_rate,
-            "progress/done_frac": (i_batch + 1) / num_batches,
+            "progress/step": current_step,
+            "progress/epoch": current_epoch,
+            "progress/batch_in_epoch": current_batch,
+            "progress/done_frac": current_step / total_steps,
         }
         t_start = time.time()
 
         # Run evaluations
-        if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
+        if cfg.eval_every > 0 and current_step % cfg.eval_every == 0:
             with timed("run_evals", metrics):
                 for evaluator in evaluators:
                     eval_metrics = await evaluator(sampling_client)
                     metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
 
         # Get batch and sample trajectories
-        env_group_builders_P = dataset.get_batch(i_batch)
+        env_group_builders_P = dataset.get_batch(current_batch)
         with timed("sample", metrics):
             if adaptive_sampler:
                 # Multi-round adaptive sampling
-                trajectory_groups_P, adaptive_metrics = await adaptive_sampler.multi_round_adaptive_downsampling(
-                    env_group_builders_P
-                )
-                #metrics.update(adaptive_metrics)
-                
+                (
+                    trajectory_groups_P,
+                    adaptive_metrics,
+                ) = await adaptive_sampler.multi_round_adaptive_downsampling(env_group_builders_P)
+                # metrics.update(adaptive_metrics)
+
                 logger.info(
                     f"Adaptive sampling completed: "
                     f"{len(trajectory_groups_P)} groups, "
@@ -439,7 +468,6 @@ async def do_sync_training(
                     *[do_group_rollout(builder, policy) for builder in env_group_builders_P]
                 )
 
-
         trajectory_groups_P = [
             trajectory_group
             for trajectory_group in trajectory_groups_P
@@ -449,7 +477,10 @@ async def do_sync_training(
         # Train step
         sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
             cfg,
-            i_batch,
+            current_step,
+            current_epoch,
+            current_batch,
+            total_steps,
             training_client,
             service_client,
             tokenizer,
@@ -461,12 +492,23 @@ async def do_sync_training(
         # Update adaptive sampler with new sampling client
         if cfg.adaptive_sampling.enabled:
             adaptive_sampler.sampling_client = sampling_client
-            adaptive_sampler.policy = TinkerTokenCompleter(sampling_client, max_tokens=cfg.max_tokens)
+            adaptive_sampler.policy = TinkerTokenCompleter(
+                sampling_client, max_tokens=cfg.max_tokens
+            )
 
         # Log metrics
         metrics.update(train_step_metrics)
         metrics["time/total"] = time.time() - t_start
-        ml_logger.log_metrics(metrics, step=i_batch)
+        ml_logger.log_metrics(metrics, step=current_step)
+
+        # Update counters
+        current_step += 1
+        current_batch += 1
+
+        # Move to next epoch if we've completed the current one
+        if current_batch >= batches_per_epoch:
+            current_batch = 0
+            current_epoch += 1
 
 
 async def main(
@@ -484,8 +526,12 @@ async def main(
 
     resume_info = checkpoint_utils.get_last_checkpoint(cfg.log_path)
     if resume_info:
-        start_batch = resume_info["batch"]
+        start_step = resume_info.get("step", resume_info.get("batch", 0))
+        start_epoch = resume_info.get("epoch", 0)
+        start_batch = resume_info.get("batch", 0)
     else:
+        start_step = 0
+        start_epoch = 0
         start_batch = 0
 
     service_client = tinker.ServiceClient(base_url=cfg.base_url)
@@ -510,8 +556,17 @@ async def main(
     if maybe_test_dataset is not None:
         evaluators.append(RLTestSetEvaluator(maybe_test_dataset, max_tokens=cfg.max_tokens))
 
-    num_batches = len(dataset)
-    logger.info(f"Will train on {num_batches} batches")
+    batches_per_epoch = len(dataset)
+
+    # Calculate total steps
+    if cfg.total_steps is not None:
+        total_steps = cfg.total_steps
+        logger.info(f"Training for {total_steps} steps (overriding num_epochs)")
+    else:
+        total_steps = batches_per_epoch * cfg.num_epochs
+        logger.info(
+            f"Training for {batches_per_epoch} batches x {cfg.num_epochs} epochs = {total_steps} steps"
+        )
 
     # Initialize reward history tracker if using global statistics
     reward_history = None
@@ -537,9 +592,11 @@ async def main(
 
     # Training loop
     await do_sync_training(
+        start_step=start_step,
+        start_epoch=start_epoch,
         start_batch=start_batch,
-        end_batch=num_batches,
-        num_batches=num_batches,
+        total_steps=total_steps,
+        batches_per_epoch=batches_per_epoch,
         cfg=cfg,
         training_client=training_client,
         service_client=service_client,
@@ -551,13 +608,15 @@ async def main(
     )
 
     # Save final checkpoint
-    if start_batch < num_batches:
+    if start_batch < total_steps:
+        final_epoch = (total_steps - 1) // batches_per_epoch
+        final_batch = (total_steps - 1) % batches_per_epoch
         _ = await checkpoint_utils.save_checkpoint_async(
             training_client=training_client,
             name="final",
             log_path=cfg.log_path,
             kind="both",
-            loop_state={"batch": num_batches},
+            loop_state={"step": total_steps, "epoch": final_epoch, "batch": final_batch},
         )
 
         # Save final reward history
