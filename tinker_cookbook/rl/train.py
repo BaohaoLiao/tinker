@@ -45,6 +45,43 @@ from tinker_cookbook.rl.adaptive_sampling import AdaptiveSamplingConfig
 logger = logging.getLogger(__name__)
 
 
+@chz.chz
+class Config:
+    learning_rate: float
+    dataset_builder: RLDatasetBuilder  # also determines batch size
+    model_name: str
+    max_tokens: int
+    compute_post_kl: bool = False
+    evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
+    lora_rank: int = 32
+
+    kl_penalty_coef: float = 0.0
+    kl_discount_factor: float = 0.0
+
+    # Number of optimizer steps per training iteration.
+    # Useful for very large batch sizes.
+    num_substeps: int = 1
+
+    wandb_project: str | None = None
+    wandb_name: str | None = None
+
+    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
+    base_url: str | None = None
+
+    remove_constant_reward_groups: bool = False
+    eval_every: int = 20
+    save_every: int = 20
+    load_checkpoint_path: str | None = None
+
+    # Global GRPO statistics
+    global_stat_est: bool = False
+
+    # Adaptive Sampling Configuration
+    adaptive_sampling: AdaptiveSamplingConfig = chz.field(
+        default_factory=lambda: AdaptiveSamplingConfig()
+    )
+
+
 def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:
     assert num_inds <= len(scores)
     sorted_inds = np.argsort(scores)
@@ -153,110 +190,6 @@ async def train_step(
         training_logprobs_D.extend(training_logprobs)
         await optim_step(training_client, learning_rate)
     return training_logprobs_D
-
-
-@chz.chz
-class StreamMinibatchConfig:
-    """
-    Configuration for training with minibatch streaming.
-    Once we have accumulated enough trajectories for a minibatch, we will
-    immediately train on them, instead of waiting for the full batch of
-    trajectories to be ready.
-    """
-
-    # Total number of trajectory groups across all minibatches and substeps
-    groups_per_batch: int
-    # For each substep, we will divide up the number of trajectory groups
-    # into this many minibatches.
-    # We will do num_minibatches forward_backward() passes and one optim_step()
-    # per substep.
-    num_minibatches: int
-
-
-@chz.chz
-class AsyncConfig:
-    """Configuration for async RL training"""
-
-    # If samples are generated from a sample more than this many steps ago,
-    # we will skip training on them.
-    max_steps_off_policy: int
-    # We will ensure all batches have at least this many groups, even
-    # as we discard stale samples
-    groups_per_batch: int
-
-
-@chz.chz
-class Config:
-    learning_rate: float
-    dataset_builder: RLDatasetBuilder  # also determines batch size
-    model_name: str
-    max_tokens: int
-    compute_post_kl: bool = False
-    evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
-    lora_rank: int = 32
-
-    kl_penalty_coef: float = 0.0
-    kl_discount_factor: float = 0.0
-
-    # Number of optimizer steps per training iteration.
-    # Useful for very large batch sizes.
-    num_substeps: int = 1
-
-    wandb_project: str | None = None
-    wandb_name: str | None = None
-
-    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
-    base_url: str | None = None
-
-    remove_constant_reward_groups: bool = False
-    eval_every: int = 20
-    save_every: int = 20
-    load_checkpoint_path: str | None = None
-
-    # Global GRPO statistics
-    group_size: int = 4
-    global_stat_est: bool = False
-
-    # ============ NEW: Adaptive Sampling Configuration ============
-    adaptive_sampling: AdaptiveSamplingConfig = chz.field(
-        default_factory=lambda: AdaptiveSamplingConfig()
-    )
-    
-    # Legacy reinforce-ada parameters (for backwards compatibility)
-    multiround_adaptive_downsampling: bool = False
-    reinforce_ada_choice: str = "balanced"
-    positive_threshold: float = 0.7
-    max_rounds: int = 4
-    round_repeat: int = 8
-    
-    def __post_init__(self):
-        """Post-initialization to handle legacy parameter migration."""
-        # Migrate legacy parameters to new adaptive_sampling config
-        if self.multiround_adaptive_downsampling:
-            self.adaptive_sampling.enabled = True
-            self.adaptive_sampling.strategy = self.reinforce_ada_choice
-            self.adaptive_sampling.positive_threshold = self.positive_threshold
-            self.adaptive_sampling.max_rounds = self.max_rounds
-            self.adaptive_sampling.samples_per_round = self.round_repeat
-            self.adaptive_sampling.final_samples_per_prompt = self.group_size
-            self.adaptive_sampling.use_global_stats = self.global_stat_est
-
-
-@chz.chz
-class WrappedTrajectoryGroup:
-    """
-    A wrapper around a trajectory group that includes metadata about how it was generated.
-    Used when we need to overlap sampling and training.
-    """
-
-    trajectory_group: TrajectoryGroup
-    # The env group builder that produced the trajectory group.
-    # Pass this along in case the sampler is too stale, and we need to
-    # requeue this group.
-    env_group_builder: EnvGroupBuilder
-    # The step that produced this trajectory group.
-    sampling_client_step: int
-    metrics: dict[str, Any] = chz.field(default_factory=dict)
 
 
 async def do_group_rollout_and_filter_constant_reward(
