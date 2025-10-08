@@ -218,7 +218,7 @@ class Config:
 
     # Reinforce-Ada specific parameters
     multiround_adaptive_downsampling: bool = False
-    reinforce_ada_choice: str = "balanced" # or "positive-focused"
+    reinforce_ada_choice: str | None = None # "balanced" or "positive-focused"
     global_stat_est: bool = False
 
 

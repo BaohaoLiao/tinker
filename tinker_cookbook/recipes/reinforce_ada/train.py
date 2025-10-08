@@ -54,13 +54,13 @@ class CLIConfig:
     max_steps_off_policy: int | None = None
 
     ## Reinforce-Ada specific hyperparameters
-    multiround_adaptive_downsampling=True
-    reinforce_ada_choice="balanced"
-    global_stat_est=True
+    multiround_adaptive_downsampling: bool = False
+    reinforce_ada_choice: str | None = None # "balanced" or "positive-focused"
+    global_stat_est: bool = False
 
     ## TODO: clip
-    clip_ratio_low=0.2
-    clip_ratio_high=0.28
+    # clip_ratio_low=0.2
+    # clip_ratio_high=0.28
 
 
 async def cli_main(cli_config: CLIConfig):
