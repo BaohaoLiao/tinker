@@ -220,9 +220,6 @@ class AdaptiveSampler:
                     prompt_state.finished = True
                     completed_this_round += 1
             
-            # Update active set
-            active_indices = {i for i in active_indices if not state[i].finished}
-            
             # Record round statistics
             round_duration = time.time() - round_start
             round_stats.append(RoundStats(
@@ -240,6 +237,9 @@ class AdaptiveSampler:
                 f"duration={round_duration:.2f}s "
                 f"reward_mean={round_stats[-1].reward_mean:.4f}"
             )
+
+            # Update active set
+            active_indices = {i for i in active_indices if not state[i].finished}
         
         # Handle fallback for unfinished prompts
         unfinished = [i for i in range(num_prompts) if not state[i].finished]
