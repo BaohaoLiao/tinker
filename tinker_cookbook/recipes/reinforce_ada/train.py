@@ -30,15 +30,6 @@ class CLIConfig:
     max_tokens: int = 2048
     kl_penalty_coef: float = 0.0
 
-    ## Reinforce-Ada Specific Hyperparameters
-    multiround_adaptive_downsampling=True
-    reinforce_ada_choice="balanced"
-    global_stat_est=True
-
-    ## TODO: clip
-    clip_ratio_low=0.2
-    clip_ratio_high=0.28
-
     # Number of optimizer steps per training iteration.
     # Useful for very large batch sizes.
     num_substeps: int = 1
@@ -61,6 +52,15 @@ class CLIConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     max_steps_off_policy: int | None = None
+
+    ## Reinforce-Ada specific hyperparameters
+    multiround_adaptive_downsampling: bool = False
+    reinforce_ada_choice: str | None = None # "balanced" or "positive-focused"
+    global_stat_est: bool = False
+
+    ## TODO: clip
+    # clip_ratio_low=0.2
+    # clip_ratio_high=0.28
 
 
 async def cli_main(cli_config: CLIConfig):
@@ -117,6 +117,9 @@ async def cli_main(cli_config: CLIConfig):
         )
         if cli_config.max_steps_off_policy is not None
         else None,
+        multiround_adaptive_downsampling=cli_config.multiround_adaptive_downsampling,
+        reinforce_ada_choice=cli_config.reinforce_ada_choice,
+        global_stat_est=cli_config.global_stat_est,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)

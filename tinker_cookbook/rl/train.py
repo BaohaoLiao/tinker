@@ -40,6 +40,7 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
+from tinker_cookbook.rl.reinforce_ada_utils import RewardHistory
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +216,11 @@ class Config:
     async_config: AsyncConfig | None = None
     stream_minibatch_config: StreamMinibatchConfig | None = None
 
+    # Reinforce-Ada specific parameters
+    multiround_adaptive_downsampling: bool = False
+    reinforce_ada_choice: str | None = None # "balanced" or "positive-focused"
+    global_stat_est: bool = False
+
 
 async def do_sync_training_with_stream_minibatch(
     start_batch: int,
@@ -227,6 +233,7 @@ async def do_sync_training_with_stream_minibatch(
     dataset: RLDataset,
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
+    reward_history: RewardHistory | None = None,
 ):
     """
     Implements fully synchronous on-policy training with minibatch streaming.
@@ -292,6 +299,7 @@ async def do_sync_training_with_stream_minibatch(
             training_client,
             service_client,
             tokenizer,
+            reward_history=reward_history,
         )
 
         # Log metrics
@@ -328,6 +336,7 @@ async def do_async_training(
     dataset: RLDataset,
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
+    reward_history: RewardHistory | None = None,
 ):
     """Implements async off-policy training, capped at K steps off policy."""
     assert cfg.async_config is not None
@@ -487,6 +496,7 @@ async def do_async_training(
                     tokenizer,
                     [g.env_group_builder for g in wrapped_trajectory_groups],
                     [g.trajectory_group for g in wrapped_trajectory_groups],
+                    reward_history=reward_history,
                 )
             sampling_client_step = i_batch + 1
             sampling_client_updated_event.set()
@@ -571,6 +581,7 @@ async def prepare_minibatch(
     trajectory_groups_P: list[TrajectoryGroup],
     tokenizer: Tokenizer,
     service_client: tinker.ServiceClient,
+    reward_history: RewardHistory | None = None,
 ) -> tuple[list[tinker.Datum], dict[str, Any]]:
     """Converts the trajectories into a minibatch, and provides metrics about the minibatch"""
 
@@ -585,7 +596,27 @@ async def prepare_minibatch(
 
     # Assemble training data
     with timed("assemble_training_data", metrics):
-        advantages_P = compute_advantages(trajectory_groups_P)
+        if cfg.global_stat_est:
+            if reward_history is None:
+                raise ValueError("reward_history must be provided when global_stat_est=True")
+            advantages_P = compute_advantages(
+                trajectory_groups_P,
+                env_group_builders_P=list(env_group_builders_P),
+                reward_history=reward_history,
+                use_global=True,
+            )
+            
+            # Log reward history statistics
+            for env_builder in env_group_builders_P:
+                prompt_id = env_builder.get_prompt_id()
+                count = reward_history.get_count(prompt_id)
+                mean = reward_history.get_mean(prompt_id)
+                # Use truncated prompt_id for cleaner logging
+                metrics[f"reward_history/count"] = count
+                metrics[f"reward_history/global_mean"] = mean
+        else:
+            advantages_P = compute_advantages(trajectory_groups_P, use_global=False)
+
         data_D, _metadata_D = assemble_training_data(trajectory_groups_P, advantages_P)
 
     # Incorporate KL penalty if configured
@@ -644,6 +675,7 @@ async def do_train_step_streaming_and_get_sampling_client(
     service_client: tinker.ServiceClient,
     tokenizer: Tokenizer,
     trajectory_group_filter: Callable[[WrappedTrajectoryGroup | None], bool] = lambda _: True,
+    reward_history: RewardHistory | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """
     As soon as we have enough trajectories for a minibatch, we will train on them.
@@ -694,6 +726,7 @@ async def do_train_step_streaming_and_get_sampling_client(
                 [g.trajectory_group for g in wrapped_trajectory_groups],
                 tokenizer,
                 service_client,
+                reward_history=reward_history,
             )
             metrics.update(prepare_minibatch_metrics)
 
@@ -746,6 +779,7 @@ async def do_train_step_and_get_sampling_client(
     tokenizer: Tokenizer,
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
+    reward_history: RewardHistory | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     metrics = {}
     data_D, prepare_minibatch_metrics = await prepare_minibatch(
@@ -754,6 +788,7 @@ async def do_train_step_and_get_sampling_client(
         trajectory_groups_P,
         tokenizer,
         service_client,
+        reward_history=reward_history,
     )
     metrics.update(prepare_minibatch_metrics)
 
@@ -789,6 +824,7 @@ async def do_sync_training(
     dataset: RLDataset,
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
+    reward_history: RewardHistory | None = None,
 ):
     """Implements fully synchronous on-policy training"""
 
@@ -828,9 +864,6 @@ async def do_sync_training(
             if trajectory_group is not None
         ]
 
-        print(trajectory_groups_P)
-        exit()
-
         # Train step
         sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
             cfg,
@@ -840,6 +873,7 @@ async def do_sync_training(
             tokenizer,
             env_group_builders_P,
             trajectory_groups_P,
+            reward_history=reward_history,
         )
 
         # Log metrics
@@ -892,6 +926,11 @@ async def main(
     num_batches = len(dataset)
     logger.info(f"Will train on {num_batches} batches")
 
+    # Initialize reward history tracker if using global statistics
+    reward_history = RewardHistory() if cfg.global_stat_est else None
+    if cfg.global_stat_est:
+        logger.info("Using global statistics estimation for advantages")
+
     # Training loop
     if cfg.async_config is not None:
         training_func = do_async_training
@@ -910,6 +949,7 @@ async def main(
         dataset=dataset,
         ml_logger=ml_logger,
         tokenizer=tokenizer,
+        reward_history=reward_history,
     )
 
     # Save final checkpoint
