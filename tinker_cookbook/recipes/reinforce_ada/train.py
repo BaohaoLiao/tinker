@@ -31,6 +31,10 @@ class CLIConfig:
     max_tokens: int = 2048
     kl_penalty_coef: float = 0.0
 
+    # Multi-epoch training parameters
+    num_epochs: int = 1
+    total_steps: int | None = None  # If set, overrides num_epochs
+
     # Number of optimizer steps per training iteration.
     # Useful for very large batch sizes.
     num_substeps: int = 1
@@ -57,7 +61,7 @@ class CLIConfig:
 
     ## Reinforce-Ada specific hyperparameters
     multiround_adaptive_downsampling: bool = False
-    reinforce_ada_choice: str = "balanced" # or "positive-focused"
+    reinforce_ada_choice: str = "balanced"  # or "positive-focused"
     max_rounds: int = 4
     round_repeat: int = 8
     positive_threshold: float = 0.7
@@ -77,23 +81,20 @@ async def cli_main(cli_config: CLIConfig):
     model_name = cli_config.model_name.replace("/", "-")
 
     # Build adaptive sampling config
-    adaptive_config = None
-    if cli_config.multiround_adaptive_downsampling:        
-        adaptive_config = AdaptiveSamplingConfig(
-            enabled=True,
-            strategy=cli_config.reinforce_ada_choice,
-            positive_threshold=cli_config.positive_threshold,
-            max_rounds=cli_config.max_rounds,
-            samples_per_round=cli_config.round_repeat,
-            final_samples_per_prompt=cli_config.group_size,
-            use_global_stats=cli_config.global_stat_est,
-        )
-
+    adaptive_config = AdaptiveSamplingConfig(
+        enabled=True,
+        strategy=cli_config.reinforce_ada_choice,
+        positive_threshold=cli_config.positive_threshold,
+        max_rounds=cli_config.max_rounds,
+        samples_per_round=cli_config.round_repeat,
+        final_samples_per_prompt=cli_config.group_size,
+        use_global_stats=cli_config.global_stat_est,
+    )
 
     run_name = (
-        f"{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}"
-        f"lr-{cli_config.group_size}group-{cli_config.groups_per_batch}"
-        f"batch-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
+        f"{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}lr"
+        f"-{cli_config.group_size}group-{cli_config.groups_per_batch}batch"
+        f"-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
     )
 
     # create log path if it doesn't exist
@@ -106,16 +107,6 @@ async def cli_main(cli_config: CLIConfig):
         wandb_name = cli_config.wandb_name
     else:
         wandb_name = run_name
-
-    # dataset builder
-    dataset_builder = math_env.ReinforceAdaDatasetBuilder(
-        dataset_name=cli_config.dataset_name,
-        batch_size=cli_config.groups_per_batch,
-        model_name_for_tokenizer=cli_config.model_name,
-        renderer_name=renderer_name,
-        group_size=cli_config.group_size,
-        convo_prefix="standard",
-    )
 
     # Log adaptive sampling configuration
     if adaptive_config.enabled:
@@ -133,6 +124,16 @@ async def cli_main(cli_config: CLIConfig):
         logger.info("STANDARD SAMPLING (no adaptive sampling)")
         logger.info(f"  Samples per prompt: {cli_config.group_size}")
         logger.info("=" * 60)
+
+    # dataset builder
+    dataset_builder = math_env.ReinforceAdaDatasetBuilder(
+        dataset_name=cli_config.dataset_name,
+        batch_size=cli_config.groups_per_batch,
+        model_name_for_tokenizer=cli_config.model_name,
+        renderer_name=renderer_name,
+        group_size=cli_config.group_size,
+        convo_prefix="standard",
+    )
 
     # Create full config
     config = Config(
@@ -153,6 +154,8 @@ async def cli_main(cli_config: CLIConfig):
         save_every=cli_config.save_every,
         global_stat_est=cli_config.global_stat_est,
         adaptive_sampling=adaptive_config,
+        num_epochs=cli_config.num_epochs,
+        total_steps=cli_config.total_steps,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
