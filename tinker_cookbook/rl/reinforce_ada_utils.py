@@ -91,17 +91,12 @@ class RewardHistory:
         if not self.prompt_rewards:
             return {
                 "num_prompts": 0,
-                "total_rewards": 0,
-                "avg_rewards_per_prompt": 0.0,
                 "overall_mean": 0.0,
             }
         
-        total_rewards = sum(len(rewards) for rewards in self.prompt_rewards.values())
         all_rewards = [r for rewards in self.prompt_rewards.values() for r in rewards]
         
         return {
             "num_prompts": len(self.prompt_rewards),
-            "total_rewards": total_rewards,
-            "avg_rewards_per_prompt": total_rewards / len(self.prompt_rewards),
             "overall_mean": sum(all_rewards) / len(all_rewards) if all_rewards else 0.0,
         }
