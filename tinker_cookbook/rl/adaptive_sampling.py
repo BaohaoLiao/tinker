@@ -238,12 +238,12 @@ class AdaptiveSampler:
                 reward_mean=float(np.mean(all_rewards)) if all_rewards else 0.0,
                 duration_sec=round_duration,
             ))
-            
+
             logger.info(
-                f"Round {round_num} completed: {completed_this_round} prompts finished, "
-                f"{len(active_indices)} still active, "
-                f"reward_mean={round_stats[-1].reward_mean:.4f}, "
-                f"duration={round_duration:.2f}s"
+                f"[Round {round_num}] active_prompts={len(active_indices)} "
+                f"completed={completed_this_round} "
+                f"duration={round_duration:.2f}s "
+                f"reward_mean={round_stats[-1].reward_mean:.4f}"
             )
         
         # Handle fallback for unfinished prompts
