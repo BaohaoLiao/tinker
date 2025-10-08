@@ -91,7 +91,7 @@ def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]
 
 def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
     # Cut down the number of trajectories to print
-    max_trajs_to_print = 4
+    max_trajs_to_print = 1
     if len(traj_group.trajectories_G) > max_trajs_to_print:
         inds = _select_representative_inds(traj_group.get_total_rewards(), max_trajs_to_print)
         traj_group = TrajectoryGroup(
@@ -425,7 +425,7 @@ async def do_sync_training(
                 trajectory_groups_P, adaptive_metrics = await adaptive_sampler.multi_round_adaptive_downsampling(
                     env_group_builders_P
                 )
-                metrics.update(adaptive_metrics)
+                #metrics.update(adaptive_metrics)
                 
                 logger.info(
                     f"Adaptive sampling completed: "
