@@ -605,15 +605,6 @@ async def prepare_minibatch(
                 reward_history=reward_history,
                 use_global=True,
             )
-            
-            # Log reward history statistics
-            for env_builder in env_group_builders_P:
-                prompt_id = env_builder.get_prompt_id()
-                count = reward_history.get_count(prompt_id)
-                mean = reward_history.get_mean(prompt_id)
-                # Use truncated prompt_id for cleaner logging
-                metrics[f"reward_history/count"] = count
-                metrics[f"reward_history/global_mean"] = mean
         else:
             advantages_P = compute_advantages(trajectory_groups_P, use_global=False)
 
