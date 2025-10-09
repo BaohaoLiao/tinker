@@ -704,26 +704,26 @@ async def do_async_training(
             # different sampler versions
             metrics.update(compute_sampling_client_metrics(wrapped_trajectory_groups))
 
-            # Aggregate metrics from trajectory workers (including adaptive sampling metrics)
-            for wrapped_traj in wrapped_trajectory_groups:
-                for key, value in wrapped_traj.metrics.items():
-                    # Aggregate worker metrics (e.g., timing, adaptive sampling stats)
-                    if key not in metrics:
-                        metrics[key] = []
-                    if isinstance(metrics[key], list):
-                        metrics[key].append(value)
-                    else:
-                        # If already aggregated, convert to list
-                        metrics[key] = [metrics[key], value]
+            # # Aggregate metrics from trajectory workers (including adaptive sampling metrics)
+            # for wrapped_traj in wrapped_trajectory_groups:
+            #     for key, value in wrapped_traj.metrics.items():
+            #         # Aggregate worker metrics (e.g., timing, adaptive sampling stats)
+            #         if key not in metrics:
+            #             metrics[key] = []
+            #         if isinstance(metrics[key], list):
+            #             metrics[key].append(value)
+            #         else:
+            #             # If already aggregated, convert to list
+            #             metrics[key] = [metrics[key], value]
             
-            # Compute averages for aggregated metrics
-            for key in list(metrics.keys()):
-                if isinstance(metrics[key], list):
-                    metrics[f"{key}_mean"] = np.mean(metrics[key])
-                    metrics[f"{key}_min"] = np.min(metrics[key])
-                    metrics[f"{key}_max"] = np.max(metrics[key])
-                    # Remove the list to keep logs clean
-                    del metrics[key]
+            # # Compute averages for aggregated metrics
+            # for key in list(metrics.keys()):
+            #     if isinstance(metrics[key], list):
+            #         metrics[f"{key}_mean"] = np.mean(metrics[key])
+            #         metrics[f"{key}_min"] = np.min(metrics[key])
+            #         metrics[f"{key}_max"] = np.max(metrics[key])
+            #         # Remove the list to keep logs clean
+            #         del metrics[key]
 
             nonlocal sampling_client
             nonlocal sampling_client_step
