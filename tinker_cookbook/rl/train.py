@@ -702,13 +702,6 @@ async def do_async_training(
             # different sampler versions
             metrics.update(compute_sampling_client_metrics(wrapped_trajectory_groups))
 
-            # Run evaluations
-            if cfg.eval_every > 0 and current_step % cfg.eval_every == 0:
-                with timed("run_evals", metrics):
-                    for evaluator in evaluators:
-                        eval_metrics = await evaluator(sampling_client)
-                        metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
-
             nonlocal sampling_client
             nonlocal sampling_client_step
             nonlocal adaptive_sampler
