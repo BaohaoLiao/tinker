@@ -607,10 +607,11 @@ async def do_async_training(
             # while we're running the rollout
             sampling_client_step_copy = sampling_client_step
             
-            # Use adaptive sampling if enabled
             if adaptive_sampler:
+                # Multi-round adaptive sampling
                 trajectory_groups, adaptive_metrics = await adaptive_sampler.multi_round_adaptive_downsampling(
-                    [env_group_builder]
+                    [env_group_builder],
+                    reward_history=reward_history,
                 )
                 metrics.update(adaptive_metrics)
                 
@@ -845,8 +846,11 @@ async def do_sync_training(
                 (
                     trajectory_groups_P,
                     adaptive_metrics,
-                ) = await adaptive_sampler.multi_round_adaptive_downsampling(env_group_builders_P)
-                # metrics.update(adaptive_metrics)
+                ) = await adaptive_sampler.multi_round_adaptive_downsampling(
+                    env_group_builders_P,
+                    reward_history=reward_history
+                )
+                metrics.update(adaptive_metrics)
 
                 logger.info(
                     f"Adaptive sampling completed: "

@@ -92,6 +92,7 @@ async def cli_main(cli_config: CLIConfig):
             samples_per_round=cli_config.round_repeat,
             final_samples_per_prompt=cli_config.group_size,
             use_global_stats=cli_config.global_stat_est,
+            group_size=cli_config.group_size
         )
     else:
         adaptive_config = None

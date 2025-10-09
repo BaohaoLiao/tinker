@@ -16,7 +16,7 @@ from typing import Any
 
 import numpy as np
 from tinker_cookbook.completers import TinkerTokenCompleter
-from tinker_cookbook.rl.rollouts import do_group_rollout
+from tinker_cookbook.rl.rollouts import do_group_rollout, do_single_rollout
 from tinker_cookbook.rl.types import EnvGroupBuilder, TrajectoryGroup
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,9 @@ class AdaptiveSamplingConfig:
     
     use_global_stats: bool = False
     """Whether to track global positive/negative counts for GRPO."""
+    
+    group_size: int = 4
+    """Group size for vanilla GRPO comparison (tracks first group_size trajectories)."""
 
 
 @dataclass
@@ -96,15 +99,21 @@ class AdaptiveSampler:
         self.max_tokens = max_tokens
         self.policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens)
         
+        # Track first round rewards for vanilla GRPO comparison
+        # Maps prompt_idx -> list of first group_size rewards
+        self.first_round_rewards: dict[int, list[float]] = {}
+        
     async def multi_round_adaptive_downsampling(
         self,
         env_group_builders: list[EnvGroupBuilder],
+        reward_history: RewardHistory | None = None,
     ) -> tuple[list[TrajectoryGroup], dict[str, Any]]:
         """
         Generate trajectories with multi-round adaptive downsampling.
         
         Args:
             env_group_builders: List of environment group builders, one per unique prompt.
+            reward_history: Optional reward history tracker for global GRPO statistics.
             
         Returns:
             Tuple of (trajectory_groups, metadata) where:
@@ -129,6 +138,9 @@ class AdaptiveSampler:
         neg_cache: dict[int, list[TrajectoryGroup]] = defaultdict(list)
         selected_groups: list[TrajectoryGroup] = []
         
+        # Reset first round rewards tracking
+        self.first_round_rewards = {}
+        
         # Global statistics for GRPO
         global_stats = {i: {"total_pos": 0, "total_neg": 0} for i in range(num_prompts)}
         
@@ -150,41 +162,34 @@ class AdaptiveSampler:
             active_builders = [env_group_builders[i] for i in active_indices]
             
             # Generate trajectories for active prompts
-            round_groups = await self._generate_round(active_builders, self.config.samples_per_round)
-            
-            # Map back to original indices
-            active_list = sorted(active_indices)
-            round_groups_by_prompt = {}
-            for i, builder_idx in enumerate(active_list):
-                # Each group has samples_per_round trajectories
-                start = i * self.config.samples_per_round
-                end = start + self.config.samples_per_round
-                trajectories = []
-                for j in range(start, end):
-                    if j < len(round_groups):
-                        trajectories.extend(round_groups[j].trajectories_G)
-                
-                if trajectories:
-                    # Create a TrajectoryGroup for this prompt's samples
-                    rewards = [sum(t.reward for t in traj.transitions) for traj in trajectories]
-                    metrics = [{} for _ in trajectories]
-                    round_groups_by_prompt[builder_idx] = TrajectoryGroup(
-                        trajectories_G=trajectories,
-                        final_rewards_G=[0.0] * len(trajectories),
-                        metrics_G=metrics,
-                    )
+            round_groups_by_prompt = await self._generate_round(
+                active_builders, self.config.samples_per_round
+            )
             
             # Process results and update caches
             completed_this_round = 0
             all_rewards = []
             
-            for prompt_idx in list(active_indices):
-                if prompt_idx not in round_groups_by_prompt:
+            # Map results back to original prompt indices
+            active_list = sorted(active_indices)
+            for local_idx, prompt_idx in enumerate(active_list):
+                if local_idx not in round_groups_by_prompt:
                     continue
                 
-                traj_group = round_groups_by_prompt[prompt_idx]
+                traj_group = round_groups_by_prompt[local_idx]
                 rewards = traj_group.get_total_rewards()
                 all_rewards.extend(rewards)
+
+                # Add all rewards to reward history for global GRPO
+                if reward_history is not None:
+                    prompt_id = env_group_builders[prompt_idx].get_prompt_id()
+                    reward_history.add_rewards(prompt_id, rewards)
+                
+                # Track first round rewards for vanilla GRPO comparison
+                if round_num == 0:
+                    # Store the first group_size rewards
+                    first_k_rewards = rewards[:self.config.group_size]
+                    self.first_round_rewards[prompt_idx] = first_k_rewards
                 
                 prompt_state = state[prompt_idx]
                 
@@ -258,24 +263,28 @@ class AdaptiveSampler:
         # Compile metadata
         metadata = {
             "adaptive_sampling/enabled": True,
-            "adaptive_sampling/total_prompts": num_prompts,
-            "adaptive_sampling/finished_prompts": sum(1 for s in state.values() if s.finished),
-            "adaptive_sampling/total_rounds": len(round_stats),
-            "adaptive_sampling/total_samples_generated": sum(
-                stat.active_prompts * self.config.samples_per_round 
-                for stat in round_stats
-            ),
-            "adaptive_sampling/final_samples_kept": sum(
-                len(group.trajectories_G) for group in selected_groups
-            ),
+            # "adaptive_sampling/total_prompts": num_prompts,
+            # "adaptive_sampling/finished_prompts": sum(1 for s in state.values() if s.finished),
+            # "adaptive_sampling/total_rounds": len(round_stats),
+            # "adaptive_sampling/total_samples_generated": sum(
+            #     stat.active_prompts * self.config.samples_per_round 
+            #     for stat in round_stats
+            # ),
+            # "adaptive_sampling/final_samples_kept": sum(
+            #     len(group.trajectories_G) for group in selected_groups
+            # ),
         }
         
+        # Add first-round vanilla GRPO comparison metrics
+        if self.first_round_rewards:
+            metadata.update(self._compute_first_round_metrics())
+        
         # Add per-round statistics
-        for stat in round_stats:
-            metadata[f"adaptive_sampling/round_{stat.round_num}/active"] = stat.active_prompts
-            metadata[f"adaptive_sampling/round_{stat.round_num}/completed"] = stat.completed_prompts
-            metadata[f"adaptive_sampling/round_{stat.round_num}/reward_mean"] = stat.reward_mean
-            metadata[f"adaptive_sampling/round_{stat.round_num}/duration_sec"] = stat.duration_sec
+        # for stat in round_stats:
+        #     metadata[f"adaptive_sampling/round_{stat.round_num}/active"] = stat.active_prompts
+        #     metadata[f"adaptive_sampling/round_{stat.round_num}/completed"] = stat.completed_prompts
+        #     metadata[f"adaptive_sampling/round_{stat.round_num}/reward_mean"] = stat.reward_mean
+        #     metadata[f"adaptive_sampling/round_{stat.round_num}/duration_sec"] = stat.duration_sec
         
         # Add global stats if enabled
         if self.config.use_global_stats:
@@ -287,20 +296,75 @@ class AdaptiveSampler:
         self,
         builders: list[EnvGroupBuilder],
         samples_per_prompt: int,
-    ) -> list[TrajectoryGroup]:
-        """Generate trajectories for one round."""
-        # Expand each builder to generate multiple samples
-        expanded_builders = []
-        for builder in builders:
+    ) -> dict[int, TrajectoryGroup]:
+        """
+        Generate trajectories for one round.
+        
+        NOTE: Each builder already creates a group of environments via make_envs().
+        We need to generate samples_per_prompt TOTAL trajectories per prompt, not
+        samples_per_prompt per environment in the group.
+        
+        Returns:
+            Dictionary mapping builder index to TrajectoryGroup with all samples for that prompt
+        """
+        # For each builder, we need to generate samples_per_prompt trajectories total
+        # We'll create individual environments and run them separately
+        
+        all_envs = []
+        env_to_builder_idx = []
+        
+        for builder_idx, builder in enumerate(builders):
             for _ in range(samples_per_prompt):
-                expanded_builders.append(builder)
+                # Get a single environment for this sample
+                envs = await builder.make_envs()
+                # Take just the first environment from the group
+                all_envs.append(envs[0])
+                env_to_builder_idx.append(builder_idx)
         
         # Generate all trajectories in parallel
-        trajectory_groups = await asyncio.gather(
-            *[do_group_rollout(builder, self.policy) for builder in expanded_builders]
+        trajectories = await asyncio.gather(
+            *[do_single_rollout(self.policy, env) for env in all_envs]
         )
-
-        return trajectory_groups
+        
+        # Group trajectories by their original builder
+        builder_trajectories: dict[int, list] = defaultdict(list)
+        for traj, builder_idx in zip(trajectories, env_to_builder_idx):
+            builder_trajectories[builder_idx].append(traj)
+        
+        # Compute group rewards for each builder's trajectories
+        result = {}
+        for builder_idx, trajs in builder_trajectories.items():
+            builder = builders[builder_idx]
+            rewards_and_metrics = await builder.compute_group_rewards(trajs)
+            rewards, metrics = zip(*rewards_and_metrics, strict=True)
+            
+            result[builder_idx] = TrajectoryGroup(
+                trajectories_G=trajs,
+                final_rewards_G=list(rewards),
+                metrics_G=list(metrics),
+            )
+        
+        return result
+    
+    def _compute_first_round_metrics(self) -> dict[str, Any]:
+        """
+        Compute metrics for the first group_size samples from each prompt.
+        This allows comparison to vanilla GRPO with the same group size.
+        """
+        if not self.first_round_rewards:
+            return {}
+        
+        metrics = {}
+        
+        # Flatten all first-round rewards
+        all_first_rewards = []
+        for rewards in self.first_round_rewards.values():
+            all_first_rewards.extend(rewards)
+        
+        if all_first_rewards:
+            metrics["adaptive_sampling/first_round_reward"] = float(np.mean(all_first_rewards))
+        
+        return metrics
     
     def _should_finish_prompt(
         self,
