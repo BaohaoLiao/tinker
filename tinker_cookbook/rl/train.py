@@ -704,26 +704,22 @@ async def do_async_training(
             # different sampler versions
             metrics.update(compute_sampling_client_metrics(wrapped_trajectory_groups))
 
-            # # Aggregate metrics from trajectory workers (including adaptive sampling metrics)
-            # for wrapped_traj in wrapped_trajectory_groups:
-            #     for key, value in wrapped_traj.metrics.items():
-            #         # Aggregate worker metrics (e.g., timing, adaptive sampling stats)
-            #         if key not in metrics:
-            #             metrics[key] = []
-            #         if isinstance(metrics[key], list):
-            #             metrics[key].append(value)
-            #         else:
-            #             # If already aggregated, convert to list
-            #             metrics[key] = [metrics[key], value]
+            #  Aggregate adaptive sampling metrics from trajectory workers
+            adaptive_enabled_values = []
+            first_round_reward_values = []
             
-            # # Compute averages for aggregated metrics
-            # for key in list(metrics.keys()):
-            #     if isinstance(metrics[key], list):
-            #         metrics[f"{key}_mean"] = np.mean(metrics[key])
-            #         metrics[f"{key}_min"] = np.min(metrics[key])
-            #         metrics[f"{key}_max"] = np.max(metrics[key])
-            #         # Remove the list to keep logs clean
-            #         del metrics[key]
+            for wrapped_traj in wrapped_trajectory_groups:
+                if "adaptive_sampling/enabled" in wrapped_traj.metrics:
+                    adaptive_enabled_values.append(wrapped_traj.metrics["adaptive_sampling/enabled"])
+                if "adaptive_sampling/first_round_reward" in wrapped_traj.metrics:
+                    first_round_reward_values.append(wrapped_traj.metrics["adaptive_sampling/first_round_reward"])
+            
+            # Log aggregated adaptive sampling metrics
+            if adaptive_enabled_values:
+                metrics["adaptive_sampling/enabled"] = all(adaptive_enabled_values)
+            
+            if first_round_reward_values:
+                metrics["adaptive_sampling/first_round_reward"] = float(np.mean(first_round_reward_values))
 
             nonlocal sampling_client
             nonlocal sampling_client_step
