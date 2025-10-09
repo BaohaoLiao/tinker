@@ -6,6 +6,7 @@ happens in multiple rounds with early stopping for prompts that have collected
 enough positive and negative samples.
 """
 
+import chz
 import asyncio
 import logging
 import time
@@ -21,7 +22,7 @@ from tinker_cookbook.rl.types import EnvGroupBuilder, TrajectoryGroup
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@chz.chz
 class AdaptiveSamplingConfig:
     """Configuration for multi-round adaptive sampling."""
     
@@ -298,7 +299,7 @@ class AdaptiveSampler:
         trajectory_groups = await asyncio.gather(
             *[do_group_rollout(builder, self.policy) for builder in expanded_builders]
         )
-        
+
         return trajectory_groups
     
     def _should_finish_prompt(

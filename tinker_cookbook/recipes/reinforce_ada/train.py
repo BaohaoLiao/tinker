@@ -4,7 +4,7 @@ from datetime import datetime
 
 import chz
 from tinker_cookbook import cli_utils, model_info
-from tinker_cookbook.rl.train import Config, main
+from tinker_cookbook.rl.train import Config, main, AsyncConfig
 from tinker_cookbook.recipes.reinforce_ada import math_env
 from tinker_cookbook.rl.adaptive_sampling import AdaptiveSamplingConfig
 
@@ -56,6 +56,8 @@ class CLIConfig:
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
+    max_steps_off_policy: int | None = None
+
     # Global GRPO statistics
     global_stat_est: bool = False
 
@@ -80,16 +82,27 @@ async def cli_main(cli_config: CLIConfig):
     )
     model_name = cli_config.model_name.replace("/", "-")
 
-    # Build adaptive sampling config
-    adaptive_config = AdaptiveSamplingConfig(
-        enabled=True,
-        strategy=cli_config.reinforce_ada_choice,
-        positive_threshold=cli_config.positive_threshold,
-        max_rounds=cli_config.max_rounds,
-        samples_per_round=cli_config.round_repeat,
-        final_samples_per_prompt=cli_config.group_size,
-        use_global_stats=cli_config.global_stat_est,
-    )
+    # Build adaptive sampling and async config
+    if cli_config.multiround_adaptive_downsampling:
+        adaptive_config = AdaptiveSamplingConfig(
+            enabled=True,
+            strategy=cli_config.reinforce_ada_choice,
+            positive_threshold=cli_config.positive_threshold,
+            max_rounds=cli_config.max_rounds,
+            samples_per_round=cli_config.round_repeat,
+            final_samples_per_prompt=cli_config.group_size,
+            use_global_stats=cli_config.global_stat_est,
+        )
+    else:
+        adaptive_config = None
+
+    if cli_config.max_steps_off_policy is not None:
+        async_config = AsyncConfig(
+            max_steps_off_policy=cli_config.max_steps_off_policy,
+            groups_per_batch=cli_config.groups_per_batch,
+        )
+    else:
+        async_config = None
 
     run_name = (
         f"{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}lr"
@@ -154,6 +167,7 @@ async def cli_main(cli_config: CLIConfig):
         save_every=cli_config.save_every,
         global_stat_est=cli_config.global_stat_est,
         adaptive_sampling=adaptive_config,
+        async_config=async_config,
         num_epochs=cli_config.num_epochs,
         total_steps=cli_config.total_steps,
     )
