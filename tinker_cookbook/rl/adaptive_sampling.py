@@ -125,11 +125,11 @@ class AdaptiveSampler:
             # Fallback to standard sampling
             return await self._standard_sampling(env_group_builders)
         
-        logger.info(
-            f"Starting adaptive sampling: max_rounds={self.config.max_rounds}, "
-            f"samples_per_round={self.config.samples_per_round}, "
-            f"strategy={self.config.strategy}"
-        )
+        # logger.info(
+        #     f"Starting adaptive sampling: max_rounds={self.config.max_rounds}, "
+        #     f"samples_per_round={self.config.samples_per_round}, "
+        #     f"strategy={self.config.strategy}"
+        # )
         
         num_prompts = len(env_group_builders)
         
@@ -154,7 +154,7 @@ class AdaptiveSampler:
         # Main generation loop
         for round_num in range(self.config.max_rounds):
             if not active_indices:
-                logger.info(f"All prompts finished at round {round_num}")
+                # logger.info(f"All prompts finished at round {round_num}")
                 break
             
             round_start = time.time()
@@ -238,12 +238,12 @@ class AdaptiveSampler:
                 duration_sec=round_duration,
             ))
 
-            logger.info(
-                f"[Round {round_num}] active_prompts={len(active_indices)} "
-                f"completed={completed_this_round} "
-                f"duration={round_duration:.2f}s "
-                f"reward_mean={round_stats[-1].reward_mean:.4f}"
-            )
+            # logger.info(
+            #     f"[Round {round_num}] active_prompts={len(active_indices)} "
+            #     f"completed={completed_this_round} "
+            #     f"duration={round_duration:.2f}s "
+            #     f"reward_mean={round_stats[-1].reward_mean:.4f}"
+            # )
 
             # Update active set
             active_indices = {i for i in active_indices if not state[i].finished}
@@ -251,9 +251,9 @@ class AdaptiveSampler:
         # Handle fallback for unfinished prompts
         unfinished = [i for i in range(num_prompts) if not state[i].finished]
         if unfinished:
-            logger.warning(
-                f"{len(unfinished)} prompts did not finish, using fallback strategy"
-            )
+            # logger.warning(
+            #     f"{len(unfinished)} prompts did not finish, using fallback strategy"
+            # )
             for prompt_idx in unfinished:
                 if prompt_idx in pos_cache or prompt_idx in neg_cache:
                     selected = self._downsample_prompt_cache(
