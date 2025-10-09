@@ -719,7 +719,7 @@ async def do_async_training(
                 metrics["adaptive_sampling/enabled"] = all(adaptive_enabled_values)
             
             if first_round_reward_values:
-                metrics["adaptive_sampling/first_round_reward"] = float(np.mean(first_round_reward_values))
+                metrics["adaptive_sampling/real_reward"] = float(np.mean(first_round_reward_values))
 
             nonlocal sampling_client
             nonlocal sampling_client_step
