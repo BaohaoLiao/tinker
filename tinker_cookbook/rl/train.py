@@ -85,6 +85,7 @@ class Config:
     log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
     base_url: str | None = None
 
+    remove_constant_reward_groups: bool = False
     eval_every: int = 50
     save_every: int = 50
     load_checkpoint_path: str | None = None
