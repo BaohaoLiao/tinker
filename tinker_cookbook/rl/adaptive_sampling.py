@@ -18,6 +18,7 @@ import numpy as np
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.rl.rollouts import do_group_rollout, do_single_rollout
 from tinker_cookbook.rl.types import EnvGroupBuilder, TrajectoryGroup
+from tinker_cookbook.rl.reward_history import RewardHistory
 
 logger = logging.getLogger(__name__)
 
