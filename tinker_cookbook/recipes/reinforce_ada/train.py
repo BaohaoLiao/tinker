@@ -122,7 +122,7 @@ async def cli_main(cli_config: CLIConfig):
         wandb_name = run_name
 
     # Log adaptive sampling configuration
-    if adaptive_config.enabled:
+    if adaptive_config is not None and adaptive_config.enabled:
         logger.info("=" * 60)
         logger.info("ADAPTIVE SAMPLING ENABLED")
         logger.info(f"  Strategy: {adaptive_config.strategy}")
