@@ -1,11 +1,6 @@
-import logging
 from typing import List
-
-import tinker
 import torch
-
-
-logger = logging.getLogger(__name__)
+import tinker
 
 
 def compute_ppo_loss(
@@ -176,7 +171,7 @@ async def forward_backward_ppo(
         )
     
     # Use forward_backward_custom like in DPO
-    backward_result = training_client.forward_backward_custom(
+    backward_result = training_client.forward_backward_custom_async(
         data_D, 
         ppo_loss_fn
     ).result()
