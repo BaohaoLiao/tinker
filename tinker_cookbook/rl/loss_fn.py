@@ -133,31 +133,50 @@ async def forward_backward_ppo(
         Tuple of (training logprobs, metrics)
     """
     
+    # Extract the custom PPO fields from loss_fn_inputs BEFORE passing to Tinker
+    sampled_logprobs_D = [
+        datum.loss_fn_inputs["logprobs"].to_torch() 
+        for datum in data_D
+    ]
+    advantages_D = [
+        datum.loss_fn_inputs["advantages"].to_torch() 
+        for datum in data_D
+    ]
+    masks_D = [
+        datum.loss_fn_inputs["mask"].to_torch() 
+        for datum in data_D
+    ]
+    target_tokens_D = [
+        torch.tensor(datum.loss_fn_inputs["target_tokens"].data)
+        for datum in data_D
+    ]
+    
+    # Create cleaned data WITHOUT the custom fields
+    # Tinker only needs model_input and target_tokens for forward pass
+    cleaned_data_D = []
+    for datum in data_D:
+        cleaned_datum = tinker.Datum(
+            model_input=datum.model_input,
+            loss_fn_inputs={
+                "target_tokens": datum.loss_fn_inputs["target_tokens"],
+                # Only include target_tokens - Tinker will compute logprobs
+            }
+        )
+        cleaned_data_D.append(cleaned_datum)
+    
     def ppo_loss_fn(
         data: List[tinker.Datum], 
         training_logprobs_list: List[torch.Tensor]
     ) -> tuple[torch.Tensor, dict[str, float]]:
-        """Custom loss function for PPO."""
+        """
+        Custom loss function for PPO.
         
-        # Extract components from data
-        sampled_logprobs_D = [
-            datum.loss_fn_inputs["logprobs"].to_torch() 
-            for datum in data
-        ]
-        advantages_D = [
-            datum.loss_fn_inputs["advantages"].to_torch() 
-            for datum in data
-        ]
-        masks_D = [
-            datum.loss_fn_inputs["mask"].to_torch() 
-            for datum in data
-        ]
-        target_tokens_D = [
-            torch.tensor(datum.loss_fn_inputs["target_tokens"].data)
-            for datum in data
-        ]
+        Note: The 'data' parameter here is the cleaned_data_D we passed in,
+        but we use the pre-extracted values (sampled_logprobs_D, advantages_D, etc.)
+        from the outer scope.
+        """
         
-        # Compute PPO loss
+        # Compute PPO loss using pre-extracted values
         return compute_ppo_loss(
             target_tokens_D=target_tokens_D,
             sampled_logprobs_D=sampled_logprobs_D,
@@ -172,7 +191,7 @@ async def forward_backward_ppo(
     
     # Use forward_backward_custom like in DPO
     fwd_bwd_future = await training_client.forward_backward_custom_async(
-        data_D, 
+        cleaned_data_D,  # Pass cleaned data without custom fields
         ppo_loss_fn
     )
     backward_result = await fwd_bwd_future.result_async()
