@@ -42,6 +42,7 @@ from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
 from tinker_cookbook.rl.reward_history import RewardHistory
 from tinker_cookbook.rl.adaptive_sampling import AdaptiveSamplingConfig
+from tinker_cookbook.rl.loss_fn import train_step_explicit_ppo
 
 logger = logging.getLogger(__name__)
 
@@ -477,11 +478,21 @@ async def do_train_step_and_get_sampling_client(
     metrics.update(prepare_minibatch_metrics)
 
     with timed("train", metrics):
-        training_logprobs_D = await train_step(
-            data_D,
-            training_client,
-            cfg.learning_rate,
+        # training_logprobs_D = await train_step(
+        #     data_D,
+        #     training_client,
+        #     cfg.learning_rate,
+        #     cfg.num_substeps,
+        # )
+        training_logprobs_D = await train_step_explicit_ppo(
+            data_D, 
+            training_client, 
+            cfg.learning_rate, 
             cfg.num_substeps,
+            clip_ratio=0.2,  # or from config
+            clip_ratio_low=None,
+            clip_ratio_high=None,
+            clip_ratio_c=3.0,
         )
 
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
