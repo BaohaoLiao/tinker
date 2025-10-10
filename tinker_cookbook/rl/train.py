@@ -478,22 +478,24 @@ async def do_train_step_and_get_sampling_client(
     metrics.update(prepare_minibatch_metrics)
 
     with timed("train", metrics):
-        # training_logprobs_D = await train_step(
-        #     data_D,
-        #     training_client,
-        #     cfg.learning_rate,
-        #     cfg.num_substeps,
-        # )
-        training_logprobs_D = await train_step_explicit_ppo(
-            data_D, 
-            training_client, 
-            cfg.learning_rate, 
+        training_logprobs_D = await train_step(
+            data_D,
+            training_client,
+            cfg.learning_rate,
             cfg.num_substeps,
-            clip_ratio=0.2,  # or from config
-            clip_ratio_low=None,
-            clip_ratio_high=None,
-            clip_ratio_c=3.0,
         )
+        
+        # TODO: implement custom PPO with clip_ratio 
+        # training_logprobs_D = await train_step_explicit_ppo(
+        #     data_D, 
+        #     training_client, 
+        #     cfg.learning_rate, 
+        #     cfg.num_substeps,
+        #     clip_ratio=0.2,  # or from config
+        #     clip_ratio_low=None,
+        #     clip_ratio_high=None,
+        #     clip_ratio_c=3.0,
+        # )
 
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
         cfg,
