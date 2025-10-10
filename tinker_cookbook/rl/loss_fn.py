@@ -174,7 +174,9 @@ async def forward_backward_ppo(
     backward_result = training_client.forward_backward_custom_async(
         data_D, 
         ppo_loss_fn
-    ).result()
+    ) #.result()
+    print(backward_result)
+    exit()
     
     # Extract training logprobs from the result
     training_logprobs_D = [
