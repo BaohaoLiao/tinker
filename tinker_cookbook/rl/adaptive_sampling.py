@@ -288,8 +288,8 @@ class AdaptiveSampler:
         #     metadata[f"adaptive_sampling/round_{stat.round_num}/duration_sec"] = stat.duration_sec
         
         # Add global stats if enabled
-        if self.config.use_global_stats:
-            metadata["adaptive_sampling/global_stats"] = global_stats
+        # if self.config.use_global_stats:
+        #     metadata["adaptive_sampling/global_stats"] = global_stats
         
         return selected_groups, metadata
     
